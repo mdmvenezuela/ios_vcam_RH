@@ -77,6 +77,8 @@
 #define VCAMCheckBinaryIntegrity        _0x5c41f7
 #define VCAMGetDecryptedSecretSalt      _0x7a30b4
 #define VCAMGetSharedDeviceHWID         _0x1e88f2
+#define VCAMGetDeviceECID               _0x4b71e8
+#define ecid                            _0x3a91f5
 #define issueAuthorizationTokenWithKey  _0x66f120
 #define revokeAuthorizationToken        _0x88c401
 #define isTokenValid                    _0x22b79c

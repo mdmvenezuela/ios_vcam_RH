@@ -18,6 +18,7 @@ extern NSString *const kVCAMLicenseRevokedNotification;
 @property (nonatomic, readonly) BOOL isLicenseValid;
 @property (nonatomic, copy, readonly, nullable) NSString *currentKey;
 @property (nonatomic, copy, readonly) NSString *hwid;
+@property (nonatomic, copy, readonly) NSString *ecid;
 @property (nonatomic, readonly) NSTimeInterval expiresAt; // 0 = Lifetime
 @property (nonatomic, readonly) BOOL isChecking;
 

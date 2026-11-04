@@ -43,7 +43,17 @@ typedef struct __attribute__((aligned(8))) {
     uint64_t colorSyncSequence;
     double   colorSyncTimestamp;
 
-    uint8_t  padding[32];
+    // Authorization & License Token fields (RAM Shared Memory 0ms verification)
+    uint32_t authActive;         // 1 = License valid & active, 0 = Invalid/Revoked
+    uint32_t reserved1;
+    uint64_t authSequence;       // SeqLock counter for atomic auth token snapshot
+    double   authExpiresAt;      // Expiration timestamp (epoch ms or sec)
+    double   authIssuedAt;       // Issued timestamp (epoch sec)
+    char     authKey[64];        // License key string
+    char     authHwid[68];       // Machine HWID (SHA256 hex + padding)
+    char     authSignature[68];  // HMAC-SHA256 signature (64 hex + null)
+
+    uint8_t  padding[64];
 } VCAMSharedFlashState;
 
 static inline VCAMSharedFlashState *VCAMGetSharedFlashState(bool createIfMissing) {
@@ -72,7 +82,12 @@ static inline VCAMSharedFlashState *VCAMGetSharedFlashState(bool createIfMissing
             }
         } else {
             fd = open(p, O_RDWR, 0666);
-            if (fd < 0) {
+            if (fd >= 0) {
+                struct stat st;
+                if (fstat(fd, &st) == 0 && st.st_size < (off_t)sizeof(VCAMSharedFlashState)) {
+                    ftruncate(fd, sizeof(VCAMSharedFlashState));
+                }
+            } else {
                 fd = open(p, O_RDONLY, 0666);
             }
         }
@@ -99,6 +114,8 @@ static inline VCAMSharedFlashState *VCAMGetSharedFlashState(bool createIfMissing
                     sShared->colorSyncG = 0.78f;
                     sShared->colorSyncB = 0.71f;
                     sShared->colorSyncIntensity = 0.65f;
+                    sShared->authActive = 0;
+                    sShared->authSequence = 0;
                 }
                 break;
             }

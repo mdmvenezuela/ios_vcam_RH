@@ -196,6 +196,10 @@ static UIWindow *VCAMGetTopWindow(void) {
     return VCAMGetSharedDeviceHWID();
 }
 
+- (NSString *)ecid {
+    return VCAMGetDeviceECID();
+}
+
 #pragma mark - 2. Quản Lý File License Lưu Trữ
 
 - (void)loadSavedLicense {
@@ -590,7 +594,15 @@ static UIWindow *VCAMGetTopWindow(void) {
 
         NSString *title = @"🔐 Kích Hoạt VCAM iOS";
         NSString *hwidShort = (self.hwid.length >= 16) ? [self.hwid substringToIndex:16] : (self.hwid ?: @"Unknown");
-        NSString *msg = reason ?: [NSString stringWithFormat:@"Mã máy (HWID):\n%@\n\nChạm giữ vào ô bên dưới và chọn 'Dán' (Paste):", hwidShort];
+        NSString *ecidVal = self.ecid;
+        NSString *msg = reason;
+        if (!msg) {
+            if (ecidVal.length > 0) {
+                msg = [NSString stringWithFormat:@"Mã máy (HWID):\n%@\nECID: %@\n\nChạm giữ vào ô bên dưới và chọn 'Dán' (Paste):", hwidShort, ecidVal];
+            } else {
+                msg = [NSString stringWithFormat:@"Mã máy (HWID):\n%@\n\nChạm giữ vào ô bên dưới và chọn 'Dán' (Paste):", hwidShort];
+            }
+        }
 
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
                                                                        message:msg

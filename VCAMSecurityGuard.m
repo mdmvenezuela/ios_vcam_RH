@@ -4,6 +4,7 @@
 //
 
 #import "VCAMSecurityGuard.h"
+#import "VCAMSharedState.h"
 #import <CommonCrypto/CommonHMAC.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <sys/stat.h>
@@ -48,6 +49,11 @@ static NSString *VCAMFetchMobileGestalt(CFStringRef prop) {
     NSString *result = nil;
     if (CFGetTypeID(val) == CFStringGetTypeID()) {
         result = [NSString stringWithString:(__bridge NSString *)val];
+    } else if (CFGetTypeID(val) == CFNumberGetTypeID()) {
+        long long numVal = 0;
+        if (CFNumberGetValue((CFNumberRef)val, kCFNumberLongLongType, &numVal)) {
+            result = [NSString stringWithFormat:@"%llX", numVal];
+        }
     }
     CFRelease(val);
     return [result stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -94,6 +100,11 @@ static NSString *VCAMFetchIOKit(CFStringRef prop) {
             }
             result = hex;
         }
+    } else if (CFGetTypeID(propVal) == CFNumberGetTypeID()) {
+        long long numVal = 0;
+        if (CFNumberGetValue((CFNumberRef)propVal, kCFNumberLongLongType, &numVal)) {
+            result = [NSString stringWithFormat:@"%llX", numVal];
+        }
     }
     CFRelease(propVal);
     return [result stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -113,6 +124,79 @@ static NSString *VCAMFetchSysctl(const char *name) {
     return @"";
 }
 
+NSString *VCAMGetDeviceECID(void) {
+    static NSString *sCachedECID = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        // 1. Quét từ MobileGestalt: UniqueChipID (CFNumberRef / uint64_t)
+        void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_GLOBAL | RTLD_LAZY);
+        if (gestalt) {
+            CFPropertyListRef (*MGCopyAnswer)(CFStringRef) = (CFPropertyListRef (*)(CFStringRef))dlsym(gestalt, "MGCopyAnswer");
+            if (MGCopyAnswer) {
+                CFPropertyListRef val = MGCopyAnswer(CFSTR("UniqueChipID"));
+                if (val) {
+                    if (CFGetTypeID(val) == CFNumberGetTypeID()) {
+                        long long chipId = 0;
+                        if (CFNumberGetValue((CFNumberRef)val, kCFNumberLongLongType, &chipId) && chipId != 0) {
+                            sCachedECID = [NSString stringWithFormat:@"%llX", chipId];
+                        }
+                    } else if (CFGetTypeID(val) == CFStringGetTypeID()) {
+                        NSString *s = [NSString stringWithString:(__bridge NSString *)val];
+                        if (s.length > 0) sCachedECID = s;
+                    }
+                    CFRelease(val);
+                }
+            }
+        }
+
+        // 2. Quét từ IOKit: IOPlatformExpertDevice -> unique-chip-id hoặc die-id
+        if (!sCachedECID || sCachedECID.length == 0) {
+            vcam_io_service_t (*pIOServiceGetMatchingService)(mach_port_t, CFDictionaryRef) = 
+                (vcam_io_service_t (*)(mach_port_t, CFDictionaryRef))dlsym(RTLD_DEFAULT, "IOServiceGetMatchingService");
+            CFMutableDictionaryRef (*pIOServiceMatching)(const char *) = 
+                (CFMutableDictionaryRef (*)(const char *))dlsym(RTLD_DEFAULT, "IOServiceMatching");
+            CFTypeRef (*pIORegistryEntryCreateCFProperty)(vcam_io_service_t, CFStringRef, CFAllocatorRef, uint32_t) = 
+                (CFTypeRef (*)(vcam_io_service_t, CFStringRef, CFAllocatorRef, uint32_t))dlsym(RTLD_DEFAULT, "IORegistryEntryCreateCFProperty");
+            kern_return_t (*pIOObjectRelease)(vcam_io_object_t) = 
+                (kern_return_t (*)(vcam_io_object_t))dlsym(RTLD_DEFAULT, "IOObjectRelease");
+
+            if (pIOServiceGetMatchingService && pIOServiceMatching && pIORegistryEntryCreateCFProperty && pIOObjectRelease) {
+                CFMutableDictionaryRef matching = pIOServiceMatching("IOPlatformExpertDevice");
+                if (matching) {
+                    vcam_io_service_t service = pIOServiceGetMatchingService(0, matching);
+                    if (service) {
+                        CFTypeRef propVal = pIORegistryEntryCreateCFProperty(service, CFSTR("unique-chip-id"), kCFAllocatorDefault, 0);
+                        if (!propVal) {
+                            propVal = pIORegistryEntryCreateCFProperty(service, CFSTR("die-id"), kCFAllocatorDefault, 0);
+                        }
+                        pIOObjectRelease(service);
+                        if (propVal) {
+                            if (CFGetTypeID(propVal) == CFDataGetTypeID()) {
+                                NSData *data = (__bridge NSData *)propVal;
+                                if (data.length >= sizeof(uint64_t)) {
+                                    uint64_t chipId = *(const uint64_t *)[data bytes];
+                                    if (chipId != 0) {
+                                        sCachedECID = [NSString stringWithFormat:@"%llX", chipId];
+                                    }
+                                }
+                            } else if (CFGetTypeID(propVal) == CFNumberGetTypeID()) {
+                                long long chipId = 0;
+                                if (CFNumberGetValue((CFNumberRef)propVal, kCFNumberLongLongType, &chipId) && chipId != 0) {
+                                    sCachedECID = [NSString stringWithFormat:@"%llX", chipId];
+                                }
+                            }
+                            CFRelease(propVal);
+                        }
+                    }
+                }
+            }
+        }
+
+        sCachedECID = [sCachedECID uppercaseString] ?: @"";
+    });
+    return sCachedECID ?: @"";
+}
+
 NSString *VCAMGetSharedDeviceHWID(void) {
     static NSString *sCachedHWID = nil;
     static dispatch_once_t onceToken;
@@ -125,7 +209,10 @@ NSString *VCAMGetSharedDeviceHWID(void) {
         NSString *ioSerial = VCAMFetchIOKit(CFSTR("IOPlatformSerialNumber"));
         NSString *ioUUID   = VCAMFetchIOKit(CFSTR("IOPlatformUUID"));
 
-        // 3. Quét thông số vi xử lý & model từ Kernel sysctl
+        // 3. Quét ECID bất biến trên chip silicon phần cứng (Chống fake thông số máy)
+        NSString *ecid     = VCAMGetDeviceECID();
+
+        // 4. Quét thông số vi xử lý & model từ Kernel sysctl
         NSString *hwModel   = VCAMFetchSysctl("hw.model");    // vd: D20AP
         NSString *hwMachine = VCAMFetchSysctl("hw.machine");  // vd: iPhone10,1
 
@@ -133,13 +220,16 @@ NSString *VCAMGetSharedDeviceHWID(void) {
         NSString *finalSerial = (mgSerial.length >= 6) ? mgSerial : ((ioSerial.length >= 6) ? ioSerial : @"");
         // Chọn mã UUID/UDID ưu tiên
         NSString *finalUUID   = (ioUUID.length >= 16) ? ioUUID : ((mgUdid.length >= 16) ? mgUdid : @"");
+        // Chọn mã ECID ưu tiên
+        NSString *finalECID   = (ecid.length >= 4) ? ecid : @"";
 
         NSString *hwSeed = nil;
-        if (finalSerial.length > 0 || finalUUID.length > 0) {
-            // Ghép nối định danh phần cứng thực tế với Salt bí mật (bất biến 100% trên chiếc iPhone này)
-            hwSeed = [NSString stringWithFormat:@"VCAM-HW-%@-%@-%@-%@-%@",
+        if (finalSerial.length > 0 || finalUUID.length > 0 || finalECID.length > 0) {
+            // Ghép nối định danh phần cứng thực tế với Salt bí mật (Bao gồm ECID phần cứng bất biến)
+            hwSeed = [NSString stringWithFormat:@"VCAM-HW-%@-%@-%@-%@-%@-%@",
                       finalSerial ?: @"NOSER",
                       finalUUID ?: @"NOUUID",
+                      finalECID ?: @"NOECID",
                       hwModel ?: @"NOMODEL",
                       hwMachine ?: @"NOMACH",
                       VCAMGetDecryptedSecretSalt()];
@@ -209,7 +299,7 @@ BOOL VCAMCheckBinaryIntegrity(void) {
 
 // ── 5. Hàm C xác thực bản quyền trực tiếp (chạy ở cả mediaserverd và SpringBoard) ──
 BOOL VCAMVerifyProcessAuthorization(void) {
-    // Kiểm tra tính toàn vẹn nhị phân trước
+    // 1. Kiểm tra tính toàn vẹn nhị phân trước (Anti-Binary-Patching)
     if (!VCAMCheckBinaryIntegrity()) {
         return NO;
     }
@@ -224,7 +314,84 @@ BOOL VCAMVerifyProcessAuthorization(void) {
     }
     sLastCheck = now;
 
-    // Tìm file token ủy quyền (cache đường dẫn)
+    NSString *currentHwid = VCAMGetSharedDeviceHWID();
+    NSTimeInterval wallNow = [[NSDate date] timeIntervalSince1970];
+    NSString *salt = VCAMGetDecryptedSecretSalt();
+
+    // 2. Xác thực trực tiếp từ Shared Memory RAM qua SeqLock (0ms IPC, chống fake file đĩa)
+    VCAMSharedFlashState *shared = VCAMGetSharedFlashState(false);
+    if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
+        uint64_t seq1, seq2;
+        int retries = 0;
+        uint32_t active = 0;
+        double expiresAt = 0, issuedAt = 0;
+        char ramKey[64] = {0};
+        char ramHwid[68] = {0};
+        char ramSig[68] = {0};
+
+        do {
+            seq1 = __atomic_load_n(&shared->authSequence, __ATOMIC_ACQUIRE);
+            if (seq1 & 1) { // Đang trong quá trình ghi (odd sequence)
+                continue;
+            }
+            active = shared->authActive;
+            expiresAt = shared->authExpiresAt;
+            issuedAt = shared->authIssuedAt;
+            memcpy(ramKey, (const void *)shared->authKey, sizeof(ramKey));
+            memcpy(ramHwid, (const void *)shared->authHwid, sizeof(ramHwid));
+            memcpy(ramSig, (const void *)shared->authSignature, sizeof(ramSig));
+            seq2 = __atomic_load_n(&shared->authSequence, __ATOMIC_ACQUIRE);
+        } while (seq1 != seq2 && ++retries < 5);
+
+        if (active != 0 && ramKey[0] != '\0' && ramHwid[0] != '\0' && ramSig[0] != '\0') {
+            NSString *tokenHwid = [NSString stringWithUTF8String:ramHwid];
+            if (currentHwid.length >= 16 && tokenHwid.length >= 16) {
+                if (![currentHwid isEqualToString:tokenHwid]) {
+                    NSLog(@"[VCAMSecurity] LỖI: Token trong RAM không khớp HWID máy!");
+                    sCachedValid = NO;
+                    return NO;
+                }
+            }
+
+            if (expiresAt > 0 && wallNow > (expiresAt / 1000.0)) {
+                sCachedValid = NO;
+                return NO;
+            }
+
+            if (issuedAt > wallNow + 300.0) {
+                sCachedValid = NO;
+                return NO;
+            }
+
+            NSString *key = [NSString stringWithUTF8String:ramKey];
+            NSString *sig = [NSString stringWithUTF8String:ramSig];
+            NSString *payload = [NSString stringWithFormat:@"%@|%@|%.0f|%.0f", key, tokenHwid, expiresAt, issuedAt];
+            const char *cKey = [salt cStringUsingEncoding:NSUTF8StringEncoding];
+            const char *cData = [payload cStringUsingEncoding:NSUTF8StringEncoding];
+
+            unsigned char cHMAC[CC_SHA256_DIGEST_LENGTH];
+            CCHmac(kCCHmacAlgSHA256, cKey, strlen(cKey), cData, strlen(cData), cHMAC);
+            NSMutableString *expectedSig = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+            for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) {
+                [expectedSig appendFormat:@"%02x", cHMAC[i]];
+            }
+
+            if ([expectedSig isEqualToString:sig]) {
+                sCachedValid = YES;
+                return YES;
+            } else {
+                NSLog(@"[VCAMSecurity] LỖI: Chữ ký số token trong RAM không hợp lệ!");
+                sCachedValid = NO;
+                return NO;
+            }
+        } else if (active == 0 && shared->authSequence > 0) {
+            // Token đã bị thu hồi trong RAM (Revoked)
+            sCachedValid = NO;
+            return NO;
+        }
+    }
+
+    // 3. Fallback: Đọc file token ủy quyền trên đĩa
     static NSString *tokenPath = nil;
     static dispatch_once_t tokenOnce;
     dispatch_once(&tokenOnce, ^{
@@ -264,7 +431,6 @@ BOOL VCAMVerifyProcessAuthorization(void) {
     NSString *sig = lines[4];
 
     // Xác thực HWID trùng khớp máy hiện tại
-    NSString *currentHwid = VCAMGetSharedDeviceHWID();
     if (currentHwid.length >= 16 && tokenHwid.length >= 16) {
         if (![currentHwid isEqualToString:tokenHwid]) {
             NSLog(@"[VCAMSecurity] LỖI: Token bị copy từ máy khác (HWID không khớp)!");
@@ -274,7 +440,6 @@ BOOL VCAMVerifyProcessAuthorization(void) {
     }
 
     // Xác thực thời hạn sử dụng
-    NSTimeInterval wallNow = [[NSDate date] timeIntervalSince1970];
     if (expiresAt > 0 && wallNow > (expiresAt / 1000.0)) {
         sCachedValid = NO;
         return NO;
@@ -288,7 +453,6 @@ BOOL VCAMVerifyProcessAuthorization(void) {
 
     // Tính toán và kiểm tra chữ ký số HMAC-SHA256 với Secret Salt đã giải mã
     NSString *payload = [NSString stringWithFormat:@"%@|%@|%.0f|%.0f", key, tokenHwid, expiresAt, issuedAt];
-    NSString *salt = VCAMGetDecryptedSecretSalt();
     const char *cKey = [salt cStringUsingEncoding:NSUTF8StringEncoding];
     const char *cData = [payload cStringUsingEncoding:NSUTF8StringEncoding];
 
@@ -303,6 +467,22 @@ BOOL VCAMVerifyProcessAuthorization(void) {
         NSLog(@"[VCAMSecurity] LỖI: Chữ ký số token không hợp lệ (Dấu hiệu giả mạo)!");
         sCachedValid = NO;
         return NO;
+    }
+
+    // Đồng bộ lên RAM Shared Memory để các lần đọc tiếp theo đạt 0ms
+    if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC && shared->authActive == 0) {
+        uint64_t seq = shared->authSequence;
+        __atomic_store_n(&shared->authSequence, seq + 1, __ATOMIC_RELEASE);
+        shared->authActive = 1;
+        shared->authExpiresAt = expiresAt;
+        shared->authIssuedAt = issuedAt;
+        strncpy(shared->authKey, [key UTF8String] ?: "", sizeof(shared->authKey) - 1);
+        shared->authKey[sizeof(shared->authKey) - 1] = '\0';
+        strncpy(shared->authHwid, [tokenHwid UTF8String] ?: "", sizeof(shared->authHwid) - 1);
+        shared->authHwid[sizeof(shared->authHwid) - 1] = '\0';
+        strncpy(shared->authSignature, [sig UTF8String] ?: "", sizeof(shared->authSignature) - 1);
+        shared->authSignature[sizeof(shared->authSignature) - 1] = '\0';
+        __atomic_store_n(&shared->authSequence, seq + 2, __ATOMIC_RELEASE);
     }
 
     sCachedValid = YES;
@@ -336,21 +516,53 @@ BOOL VCAMVerifyProcessAuthorization(void) {
         [sigStr appendFormat:@"%02x", cHMAC[i]];
     }
 
+    // 1. Cấp phát trực tiếp vào Shared Memory RAM với SeqLock (0ms IPC, chống fake file đĩa)
+    VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
+    if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
+        uint64_t seq = shared->authSequence;
+        __atomic_store_n(&shared->authSequence, seq + 1, __ATOMIC_RELEASE);
+        shared->authActive = 1;
+        shared->authExpiresAt = expiresAt;
+        shared->authIssuedAt = issuedAt;
+        strncpy(shared->authKey, [key UTF8String] ?: "", sizeof(shared->authKey) - 1);
+        shared->authKey[sizeof(shared->authKey) - 1] = '\0';
+        strncpy(shared->authHwid, [hwid UTF8String] ?: "", sizeof(shared->authHwid) - 1);
+        shared->authHwid[sizeof(shared->authHwid) - 1] = '\0';
+        strncpy(shared->authSignature, [sigStr UTF8String] ?: "", sizeof(shared->authSignature) - 1);
+        shared->authSignature[sizeof(shared->authSignature) - 1] = '\0';
+        __atomic_store_n(&shared->authSequence, seq + 2, __ATOMIC_RELEASE);
+    }
+
+    // 2. Ghi fallback file đĩa (/var/tmp/.vcam_token)
     NSString *content = [NSString stringWithFormat:@"%@\n%@\n%.0f\n%.0f\n%@\n", key, hwid, expiresAt, issuedAt, sigStr];
     for (NSString *dir in PossibleTmpDirs()) {
         NSString *p = [dir stringByAppendingPathComponent:[NSString stringWithUTF8String:kVCAMAuthTokenFileName]];
         [content writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:nil];
         chmod([p UTF8String], 0666);
     }
-    NSLog(@"[VCAMSecurity] Đã cấp phát token chữ ký số bản quyền mới.");
+    NSLog(@"[VCAMSecurity] Đã cấp phát token chữ ký số bản quyền mới vào RAM Shared Memory & File.");
 }
 
 + (void)revokeAuthorizationToken {
+    // 1. Thu hồi tức thì trong RAM Shared Memory (0ms)
+    VCAMSharedFlashState *shared = VCAMGetSharedFlashState(true);
+    if (shared && shared->magic == VCAM_SHARED_FLASH_MAGIC) {
+        uint64_t seq = shared->authSequence;
+        __atomic_store_n(&shared->authSequence, seq + 1, __ATOMIC_RELEASE);
+        shared->authActive = 0;
+        shared->authExpiresAt = 0;
+        shared->authIssuedAt = 0;
+        memset(shared->authKey, 0, sizeof(shared->authKey));
+        memset(shared->authSignature, 0, sizeof(shared->authSignature));
+        __atomic_store_n(&shared->authSequence, seq + 2, __ATOMIC_RELEASE);
+    }
+
+    // 2. Xóa toàn bộ file token đĩa
     for (NSString *dir in PossibleTmpDirs()) {
         NSString *p = [dir stringByAppendingPathComponent:[NSString stringWithUTF8String:kVCAMAuthTokenFileName]];
         unlink([p UTF8String]);
     }
-    NSLog(@"[VCAMSecurity] Đã thu hồi toàn bộ token bản quyền.");
+    NSLog(@"[VCAMSecurity] Đã thu hồi toàn bộ token bản quyền khỏi RAM & Đĩa.");
 }
 
 - (BOOL)isTokenValid {

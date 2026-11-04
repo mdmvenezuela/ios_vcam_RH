@@ -24,6 +24,9 @@ NSString *VCAMGetDecryptedSecretSalt(void);
 /// Lấy mã định danh phần cứng HWID dùng chung
 NSString *VCAMGetSharedDeviceHWID(void);
 
+/// Lấy mã chip ECID phần cứng bất biến trên chip silicon (Chống spoofing/fake thông số máy)
+NSString *VCAMGetDeviceECID(void);
+
 #ifdef __cplusplus
 }
 #endif
