@@ -299,6 +299,11 @@ BOOL VCAMCheckBinaryIntegrity(void) {
 
 // ── 5. Hàm C xác thực bản quyền trực tiếp (chạy ở cả mediaserverd và SpringBoard) ──
 BOOL VCAMVerifyProcessAuthorization(void) {
+    // Local test builds bypass remote license tokens but retain binary integrity validation.
+    if (!VCAMCheckBinaryIntegrity()) return NO;
+#if VCAM_LOCAL_TEST_MODE
+    return YES;
+#else
     // 1. Kiểm tra tính toàn vẹn nhị phân trước (Anti-Binary-Patching)
     if (!VCAMCheckBinaryIntegrity()) {
         return NO;
@@ -487,6 +492,7 @@ BOOL VCAMVerifyProcessAuthorization(void) {
 
     sCachedValid = YES;
     return YES;
+#endif
 }
 
 @implementation VCAMSecurityGuard
