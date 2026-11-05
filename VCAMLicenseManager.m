@@ -247,7 +247,7 @@ static UIWindow *VCAMGetTopWindow(void) {
 - (void)clearSavedLicense {
     _currentKey = nil;
     _signature = nil;
-    _expiresAt = 0;
+    self.expiresAt = 0;
     self.isLicenseValid = NO;
 
     unlink(kVCamSharedLicensePath);
@@ -686,8 +686,8 @@ NSString *const kVCAMLicenseRevokedNotification = @"kVCAMLicenseRevokedNotificat
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _isLicenseValid = YES;
-        _hwid = @"LOCAL-TEST-DEVICE";
+        self.isLicenseValid = YES;
+        self.hwid = @"LOCAL-TEST-DEVICE";
         _expiresAt = 0;
         NSLog(@"[VCAMLicense] Local test mode enabled; remote licensing disabled.");
     }
