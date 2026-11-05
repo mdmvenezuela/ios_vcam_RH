@@ -1147,16 +1147,12 @@ BOOL VCamIsScreenPointInTweakUI(CGFloat normX, CGFloat normY) {
     UIButton *pauseBtn = [self _iconButtonWithTitle:pauseIcon x:startIconX + (iconW + iconSpacing) * 2 y:iconY w:iconW h:iconH color:pauseCol sel:@selector(_menuTogglePause)];
     [panel addSubview:pauseBtn];
 
-    // Icon 4: Quản lý Key / Hạn dùng (🔑)
-    UIButton *licBtn = [self _iconButtonWithTitle:@"🔑" x:startIconX + (iconW + iconSpacing) * 3 y:iconY w:iconW h:iconH color:[UIColor colorWithRed:0.6 green:0.8 blue:1.0 alpha:1] sel:@selector(_menuShowLicense)];
-    [panel addSubview:licBtn];
-
-    // Icon 5: Xóa video / ảnh (🗑️)
-    UIButton *trashBtn = [self _iconButtonWithTitle:@"🗑️" x:startIconX + (iconW + iconSpacing) * 4 y:iconY w:iconW h:iconH color:[UIColor colorWithRed:1 green:0.45 blue:0.45 alpha:1] sel:@selector(_menuDisable)];
+    // Icon 4: Xóa video / ảnh (🗑️)
+    UIButton *trashBtn = [self _iconButtonWithTitle:@"🗑️" x:startIconX + (iconW + iconSpacing) * 3 y:iconY w:iconW h:iconH color:[UIColor colorWithRed:1 green:0.45 blue:0.45 alpha:1] sel:@selector(_menuDisable)];
     [panel addSubview:trashBtn];
 
-    // Icon 6: Đóng (✕)
-    UIButton *closeBtn = [self _iconButtonWithTitle:@"✕" x:startIconX + (iconW + iconSpacing) * 5 y:iconY w:iconW h:iconH color:[UIColor colorWithWhite:0.85 alpha:1] sel:@selector(_hideMenu)];
+    // Icon 5: Đóng (✕)
+    UIButton *closeBtn = [self _iconButtonWithTitle:@"✕" x:startIconX + (iconW + iconSpacing) * 4 y:iconY w:iconW h:iconH color:[UIColor colorWithWhite:0.85 alpha:1] sel:@selector(_hideMenu)];
     [panel addSubview:closeBtn];
 
     [_rootVC.view insertSubview:panel aboveSubview:overlay];
