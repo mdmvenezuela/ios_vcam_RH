@@ -688,7 +688,7 @@ NSString *const kVCAMLicenseRevokedNotification = @"kVCAMLicenseRevokedNotificat
     if (self) {
         self.isLicenseValid = YES;
         self.hwid = @"LOCAL-TEST-DEVICE";
-        _expiresAt = 0;
+        self.expiresAt = 0;
         NSLog(@"[VCAMLicense] Local test mode enabled; remote licensing disabled.");
     }
     return self;
