@@ -6,6 +6,8 @@
 //
 
 #import "VCAMLicenseManager.h"
+
+#if !VCAM_LOCAL_TEST_MODE
 #import "VCAMSecurityGuard.h"
 #import <CommonCrypto/CommonHMAC.h>
 #import <CommonCrypto/CommonDigest.h>
@@ -654,3 +656,62 @@ static UIWindow *VCAMGetTopWindow(void) {
 
 @end
 
+
+
+#else
+
+NSString *const kVCAMLicenseStatusChangedNotification = @"kVCAMLicenseStatusChangedNotification";
+NSString *const kVCAMLicenseRevokedNotification = @"kVCAMLicenseRevokedNotification";
+
+@interface VCAMLicenseManager ()
+@property (nonatomic, assign) BOOL isLicenseValid;
+@property (nonatomic, copy, nullable) NSString *currentKey;
+@property (nonatomic, copy) NSString *hwid;
+@property (nonatomic, copy, nullable) NSString *signature;
+@property (nonatomic, assign) NSTimeInterval expiresAt;
+@property (nonatomic, assign) BOOL isChecking;
+@end
+
+@implementation VCAMLicenseManager
+
++ (instancetype)sharedManager {
+    static VCAMLicenseManager *manager;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        manager = [[VCAMLicenseManager alloc] init];
+    });
+    return manager;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _isLicenseValid = YES;
+        _hwid = @"LOCAL-TEST-DEVICE";
+        _expiresAt = 0;
+        NSLog(@"[VCAMLicense] Local test mode enabled; remote licensing disabled.");
+    }
+    return self;
+}
+
+- (NSString *)ecid { return @"LOCAL-TEST"; }
+- (void)startHeartbeat {}
+- (void)stopHeartbeat {}
+- (BOOL)validateLocalSignatureOffline { return YES; }
+- (NSString *)remainingTimeString { return @"Modo de pruebas local"; }
+
+- (void)activateWithKey:(NSString *)key completion:(void (^)(BOOL, NSString *))completion {
+    if (completion) completion(YES, @"Modo de pruebas local; no se requiere licencia.");
+}
+
+- (void)verifyLicenseOnlineWithCompletion:(void (^)(BOOL, NSString *))completion {
+    if (completion) completion(YES, @"Modo de pruebas local; validación remota desactivada.");
+}
+
+- (void)promptActivationDialogWithReason:(NSString *)reason presenter:(UIViewController *)presenter {
+    NSLog(@"[VCAMLicense] Activation dialog suppressed in local test mode.");
+}
+
+@end
+
+#endif
