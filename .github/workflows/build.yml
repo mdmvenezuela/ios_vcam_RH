@@ -66,3 +66,5 @@ jobs:
           TAG="build-${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
           git tag -a "$TAG" "$GITHUB_SHA" -m "Successful build $TAG"
           git push origin "$TAG"
+
+# Trigger local license-removal validation build
